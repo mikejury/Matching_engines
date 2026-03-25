@@ -1,0 +1,272 @@
+# ============================================================
+# Lotus Engine Config
+# Profile: casual_social_v1
+# Environment: simulation
+# Purpose:
+#   Baseline sparse-city / early-density VYB matching profile.
+#   Intended for simulator use while tuning weights, thresholds,
+#   and fallback behavior.
+# ============================================================
+
+profile_name: casual_social_v1
+profile_type: vyb_matching
+algorithm_version: lotus-v1
+ruleset_version: 1.0.0
+environment: simulation
+status: draft
+
+metadata:
+  created_by: mike
+  created_at: 2026-03-24T12:00:00Z
+  notes: >
+    Initial simulation baseline for Lotus. Designed for low-density VYB
+    matching with progressive fallback. Values are exploratory and should
+    be refined through simulator runs rather than treated as final truths.
+  tags:
+    - simulation
+    - lotus
+    - cold_start
+    - sparse_density
+    - baseline
+
+# ------------------------------------------------------------
+# Eligibility
+# Controls tunable admission rules for the supplied request pool.
+# Hard legal/safety rules still remain enforced in engine code.
+# ------------------------------------------------------------
+eligibility:
+  require_live_location: true
+  live_location_max_age_seconds: 1800         # 30 min
+  require_matching_enabled: true
+  require_request_status: queued
+  allow_degraded_travel: true
+  reciprocal_friendship_required: true
+  cross_window_blending_enabled: false
+
+  # If true, requests with expired live location are excluded outright.
+  # If false, they may continue only if degraded travel handling is allowed.
+  exclude_expired_live_location: false
+
+  # If true, missing travel metrics may fall back to geohash heuristic.
+  allow_geohash_travel_fallback: true
+
+# ------------------------------------------------------------
+# Weights
+# Pair/group scoring weights. These do not need to sum to 1.0
+# if runtime normalization is applied, but it is cleaner if they do.
+# ------------------------------------------------------------
+weights:
+  compatibility: 0.40   
+  distance: 0.22
+  energy: 0.18
+  schedule: 0.05        
+  friend_graph: 0.10
+  demographic: 0.05
+
+# ------------------------------------------------------------
+# Thresholds
+# Main acceptance and quality boundaries.
+# These are placeholders for simulation refinement.
+# ------------------------------------------------------------
+thresholds:
+  target_coverage: 0.95
+  fallback_coverage_floor: 0.80
+
+  min_avg_group_score: 0.72
+  min_pair_score: 0.55
+  absolute_min_group_score: 0.58
+
+  max_travel_burden: 0.70
+  max_group_travel_imbalance: 0.25
+
+  # Hard pair cutoff before optimization
+  hard_pair_score_floor: 0.40
+
+  # Max proportion of degraded-travel participants allowed in a final group
+  max_degraded_travel_ratio: 0.50
+
+# ------------------------------------------------------------
+# Optimizer
+# Controls the greedy seeded group builder and local improvement pass.
+# ------------------------------------------------------------
+optimizer:
+  seed_strategy: scarcity_first
+  local_improvement_enabled: true
+  local_improvement_passes: 2
+
+  target_group_size: 4
+  min_group_size: 3
+  max_group_size: 5
+
+  weak_link_penalty_weight: 0.20
+  travel_imbalance_penalty_weight: 0.10
+  size_mismatch_penalty_weight: 0.08
+
+  # If true, groups that hit target size are favored slightly over those
+  # that are merely valid.
+  prefer_target_group_size: true
+
+# ------------------------------------------------------------
+# Selection
+# Controls how Lotus chooses the best accepted cycle result.
+# ------------------------------------------------------------
+selection:
+  early_stop_enabled: true
+  require_best_cycle_selection: true
+  publish_partial_if_no_target_coverage: true
+
+  tie_break_order:
+    - coverage_desc
+    - avg_group_score_desc
+    - fallback_depth_asc
+    - unmatched_count_asc
+
+# ------------------------------------------------------------
+# Features
+# Toggles optional shaping behaviors.
+# ------------------------------------------------------------
+features:
+  demographic_balance_enabled: false
+  familiarity_bonus_enabled: true
+  novelty_bonus_enabled: true
+  degraded_travel_penalty_enabled: true
+  mute_edge_soft_penalty_enabled: false
+  verbose_candidate_reason_logging: true
+
+# ------------------------------------------------------------
+# Friendship handling
+# Clarifies how graph edges are interpreted by Lotus.
+# ------------------------------------------------------------
+friendship_rules:
+  accepted_mode: reciprocal_required
+  blocked_edge_behavior: hard_exclusion_either_direction
+  muted_edge_behavior: no_bonus
+  pending_edge_behavior: ignore
+
+  familiarity_bonus_strength: 0.08
+  novelty_bonus_strength: 0.05
+
+# ------------------------------------------------------------
+# Travel handling
+# Controls how Lotus interprets travel_metrics and degraded travel cases.
+# ------------------------------------------------------------
+travel_rules:
+  preferred_target_type: vyb_request
+  require_non_expired_metrics: true
+  choose_most_recent_metric: true
+
+  degraded_travel_behavior: penalty
+  degraded_travel_penalty: 0.10
+
+  geohash_fallback_distance_mode: coarse_estimate
+  geohash_fallback_time_mode: heuristic
+
+# ------------------------------------------------------------
+# Group construction
+# Additional shaping rules for group assembly.
+# ------------------------------------------------------------
+group_rules:
+  enforce_request_group_bounds: true
+  enforce_participant_group_bounds: true
+
+  # Effective group bounds rule:
+  # effective_min = max(all mins)
+  # effective_max = min(all maxes)
+  invalid_if_effective_min_exceeds_max: true
+
+  # If true, optimizer prefers groups whose internal pair scores
+  # are more even rather than groups with one very weak edge.
+  balance_internal_cohesion: true
+
+# ------------------------------------------------------------
+# Fallback ladder
+# Progressive relaxation tiers. Tier 0 is ideal/default.
+# These numbers are exploratory and should be tuned via simulation.
+# ------------------------------------------------------------
+fallback_ladder:
+  - tier: 0
+    name: ideal
+    description: Default strict matching pass
+    weight_overrides: {}
+    threshold_overrides: {}
+    feature_overrides: {}
+    stop_on_accept: true
+
+  - tier: 1
+    name: light_preference_relaxation
+    description: Reduce lower-priority social shaping influence slightly
+    weight_overrides:
+      friend_graph: 0.08
+      demographic: 0.03
+    threshold_overrides: {}
+    feature_overrides: {}
+    stop_on_accept: true
+
+  - tier: 2
+    name: travel_flex
+    description: Allow modestly wider travel tolerance
+    weight_overrides:
+      distance: 0.17
+    threshold_overrides:
+      max_travel_burden: 0.78
+      max_group_travel_imbalance: 0.30
+    feature_overrides:
+      degraded_travel_penalty_enabled: true
+    stop_on_accept: true
+
+  - tier: 3
+    name: compatibility_softening
+    description: Lower compatibility floor slightly to improve coverage
+    weight_overrides:
+      compatibility: 0.33
+    threshold_overrides:
+      min_pair_score: 0.50
+      min_avg_group_score: 0.69
+    feature_overrides: {}
+    stop_on_accept: true
+
+  - tier: 4
+    name: group_shape_flex
+    description: Broaden acceptable group shape before final bounded fallback
+    weight_overrides: {}
+    threshold_overrides:
+      absolute_min_group_score: 0.55
+    feature_overrides: {}
+    stop_on_accept: true
+
+  - tier: 5
+    name: last_acceptable_state
+    description: Final bounded fallback before no-better-acceptable-result
+    weight_overrides:
+      friend_graph: 0.05
+      demographic: 0.00
+    threshold_overrides:
+      fallback_coverage_floor: 0.75
+      min_avg_group_score: 0.66
+      min_pair_score: 0.47
+      absolute_min_group_score: 0.53
+    feature_overrides: {}
+    stop_on_accept: true
+
+# ------------------------------------------------------------
+# Runtime guards
+# Additional operational safety rails.
+# ------------------------------------------------------------
+runtime:
+  max_cycles_per_run: 6
+  max_runtime_ms: 5000
+  fail_closed_on_invalid_config: true
+  persist_cycle_diagnostics: true
+  persist_rejected_candidate_reasons: true
+
+# ------------------------------------------------------------
+# Simulation metadata
+# Not used by production logic directly, but useful for experiments.
+# ------------------------------------------------------------
+simulation:
+  scenario_name: sparse_city_baseline
+  scenario_density_label: low
+  scenario_notes: >
+    Baseline profile for early Lotus simulation runs with low participant
+    density and high need for fallback coverage.
+  synthetic_population_tag: v1_baseline_agents
